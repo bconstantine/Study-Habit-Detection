@@ -1,0 +1,10 @@
+tensorflow
+tensorflow-gpu
+opencv-python
+mediapipe
+sklearn
+matplotlib
+win10toast
+joblib
+PyQt5
+datetime
