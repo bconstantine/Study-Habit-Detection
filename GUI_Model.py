@@ -13,7 +13,7 @@
 
 
 
-# In[1]:
+# In[ ]:
 
 
 import os
@@ -34,11 +34,57 @@ from tensorflow import keras
 from keras.models import Sequential
 from keras.layers import LSTM, Dense
 from keras.callbacks import TensorBoard, EarlyStopping
+from typing import Union
+from pydantic import BaseModel
+from uuid import uuid4
+import json
+
+#pydantic BaseModel Class (Employee Data)
+class HistoryRecord(BaseModel):
+    date:str = ""
+    good: Union[float, None] = None
+    cheek: Union[float, None] = None
+    forehead: Union[float, None] = None
+
+dataName = 'HistoryRecord.json'
+HistoryData = []
+good = 0
+cheek = 0
+forehead = 0
+multiplier = 8/100
+
+#load json data
+if os.path.exists(dataName):
+    with open(dataName, "r") as file:
+        HistoryData = json.load(file)
+
+def writeToJson():
+    with open(dataName, "w") as f: 
+        json.dump(HistoryData, f, indent = 4)
+
+def clearJson():
+    HistoryData.clear()
+    with open(dataName, "w") as f: 
+        json.dump(HistoryData, f, indent = 4)
+
+def addEntry(date:str = "", good:float = 0, cheek:float = 0, forehead:float = 0):
+    data_id = uuid4().hex
+    history_dict = HistoryRecord().dict()
+    history_dict.update({"id":data_id})
+    history_dict["date"] = date
+    history_dict["good"] = good
+    history_dict["cheek"] = cheek
+    history_dict["forehead"] = forehead
+    
+    HistoryData.append(history_dict)
+    writeToJson()
 
 #using holistic model to additionally detect face landmark rather than pose only
 #if it turns out too heavy, then switch holistic to pose in the future
 mp_holistic = mp.solutions.holistic
 mp_drawing = mp.solutions.drawing_utils #for drawing the landmark to the screen (opencv)
+
+
 
 def draw_points(img, holisticOut, mp_holistic):
     '''
@@ -148,7 +194,7 @@ def buildModel(optimizer_params = 'Adam', loss_params = 'categorical_crossentrop
     model.compile(optimizer=optimizer_params, loss=loss_params, metrics=metrics_params)
     print(model.summary())
     return model
-colors = [(245,117,16), (117,245,16), (16,117,245), (100,100,100)]
+colors = [(245,117,16), (10,11,255), (16,117,245), (100,100,100)]
 def prob_viz(res, actions, input_frame, colors):
     output_frame = input_frame.copy()
     for num, prob in enumerate(res):
@@ -176,6 +222,10 @@ class Ui_Form(object):
         self.control_bt = QtWidgets.QPushButton(Form)
         self.control_bt.setObjectName("control_bt")
         self.verticalLayout.addWidget(self.control_bt)
+        
+        self.control2_bt = QtWidgets.QPushButton(Form)
+        self.control2_bt.setObjectName("control2_bt")
+        self.verticalLayout.addWidget(self.control2_bt)
 
         self.capture = QtWidgets.QPushButton(Form)
         self.capture.setObjectName("capture")
@@ -189,7 +239,8 @@ class Ui_Form(object):
     def retranslateUi(self, Form):
         _translate = QtCore.QCoreApplication.translate
         Form.setWindowTitle(_translate("Form",     "Cam view"))
-        self.control_bt.setText(_translate("Form", "Start or Stop"))
+        self.control_bt.setText(_translate("Form", "Start"))
+        self.control2_bt.setText(_translate("Form", "Stop"))
         self.capture.setText(_translate("Form",    "Capture"))
 
 class video (QtWidgets.QDialog, Ui_Form):
@@ -198,6 +249,8 @@ class video (QtWidgets.QDialog, Ui_Form):
         self.setupUi(self)                                     
 
         self.control_bt.clicked.connect(self.start_webcam)
+        self.control2_bt.clicked.connect(self.stop_webcam)
+        self.control2_bt.clicked.connect(self.startUIWindowCompleted)
         self.capture.clicked.connect(self.capture_image)
         self.capture.clicked.connect(self.startUIWindow)       
 
@@ -214,7 +267,7 @@ class video (QtWidgets.QDialog, Ui_Form):
         self.AImodel= buildModel()
         self.AImodel.load_weights('studyface_more.h5')
         self.sequence = []
-        self.predictions = []
+        #self.predictions = []
         self.prevPosture = 0
         self.postureRepetition = 0
     
@@ -232,18 +285,34 @@ class video (QtWidgets.QDialog, Ui_Form):
             event.ignore()
     @QtCore.pyqtSlot()
     def start_webcam(self):
+        global good
+        global cheek
+        global forehead
         if self.startCapture == False:
+            good = 0
+            cheek = 0
+            forehead = 0
             if self.cap is None:
                 self.cap = cv2.VideoCapture(0)
                 self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
                 self.cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
             self.startCapture = True
             self.timer.start()
-        else:
+    @QtCore.pyqtSlot()
+    def stop_webcam(self):
+        global good
+        global cheek
+        global forehead
+        if self.startCapture == True:
             self.startCapture = False
-
+            self.prevPosture = 0
+            self.postureRepetition = 0
+            addEntry(str(datetime.datetime.now()), good*multiplier,cheek*multiplier, forehead*multiplier)
     @QtCore.pyqtSlot()
     def update_frame(self):
+        global good
+        global cheek
+        global forehead
         if self.startCapture: 
             ret, frame = self.cap.read()
             #simage     = cv2.flip(image, 1)
@@ -260,7 +329,7 @@ class video (QtWidgets.QDialog, Ui_Form):
                 res = self.AImodel.predict(np.expand_dims(self.sequence, axis=0), verbose = 0)[0] #we need to use [0] because dimens
                 #print(actions[np.argmax(res)])
                 curPred = np.argmax(res)
-                self.predictions.append(curPred)
+                #self.predictions.append(curPred)
 
 
                 #3. Viz logic
@@ -273,11 +342,18 @@ class video (QtWidgets.QDialog, Ui_Form):
                     else:
                         self.prevPosture = curPred
                         self.postureRepetition = 0
+                    
+                    if curPred == 0:
+                        good += 1
+                    elif curPred == 1:
+                        cheek += 1
+                    else:
+                        forehead += 1
 
                     
                 # Viz probabilities
                 img = prob_viz(res, actions, img, colors)
-                cv2.putText(img, f'Current detected action: {actions[curPred]}, repetition: {self.postureRepetition}', (15,12), 
+                cv2.putText(img, f'Current detected action: {actions[curPred]}, repetition: {self.postureRepetition*multiplier}', (15,12), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1, cv2.LINE_AA)
             self.displayImage(img, True)
         else:
@@ -302,7 +378,7 @@ class video (QtWidgets.QDialog, Ui_Form):
                 #print('reach here!')
                 res = self.AImodel.predict(np.expand_dims(self.sequence, axis=0), verbose = 0)[0] #we need to use [0] because dimens
                 #print(actions[np.argmax(res)])
-                self.predictions.append(np.argmax(res))
+                #self.predictions.append(np.argmax(res))
 
 
                 #3. Viz logic
@@ -355,6 +431,13 @@ class video (QtWidgets.QDialog, Ui_Form):
         self.Window.ToolsBTN.clicked.connect(self.goWindow1)
         self.hide()
         self.Window.show()
+        
+    def startUIWindowCompleted(self):
+        self.Window = UIWindowCompleted()
+        self.setWindowTitle("Session Complete")
+        self.Window.ToolsBTN.clicked.connect(self.goWindow1)
+        self.hide()
+        self.Window.show()
     def goWindow1(self):
         self.show()
         self.Window.hide()
@@ -375,6 +458,26 @@ class UIWindow(QWidget):
         self.v_box.addWidget(self.ToolsBTN)
         self.setLayout(self.v_box)
 
+class UIWindowCompleted(QWidget):
+    def __init__(self, parent=None):
+        super(UIWindowCompleted, self).__init__(parent)
+
+        self.resize(300, 300)
+        self.label = QLabel("Session Completed!", alignment=QtCore.Qt.AlignCenter)
+        self.goodlabel = QLabel(f"Good posture: {round(good*multiplier,2)} s", alignment=QtCore.Qt.AlignCenter)
+        self.cheeklabel = QLabel(f"Cheek posture: {round(cheek*multiplier,2)} s", alignment=QtCore.Qt.AlignCenter)
+        self.foreheadlabel = QLabel(f"Forehead posture: {round(forehead*multiplier,2)} s", alignment=QtCore.Qt.AlignCenter)
+        self.ToolsBTN = QPushButton('Back to main window')
+#        self.ToolsBTN.move(50, 350)
+
+        self.v_box = QVBoxLayout()
+        self.v_box.addWidget(self.label)
+        self.v_box.addWidget(self.goodlabel)
+        self.v_box.addWidget(self.cheeklabel)
+        self.v_box.addWidget(self.foreheadlabel)
+        self.v_box.addWidget(self.ToolsBTN)
+        self.setLayout(self.v_box)
+
 
 if __name__=='__main__':
     import sys
@@ -385,7 +488,7 @@ if __name__=='__main__':
     sys.exit(app.exec_())
 
 
-# In[2]:
+# In[ ]:
 
 
 
@@ -394,5 +497,21 @@ if __name__=='__main__':
 # In[ ]:
 
 
+
+
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
 
 
